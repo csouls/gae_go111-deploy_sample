@@ -37,7 +37,4 @@ func TestSetup(t *testing.T) {
 	if startupTime.IsZero() {
 		t.Error("warmupApp: got (uninitialized startupTime) want (startupTime)")
 	}
-	if client == nil {
-		t.Error("warmupApp: got (uninitialized client) want (client)")
-	}
 }

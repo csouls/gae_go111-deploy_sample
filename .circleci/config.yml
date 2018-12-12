@@ -1,0 +1,86 @@
+version: 2.1
+orbs:
+  gcp-cli: circleci/gcp-cli@1.0.1
+executors:
+  golang:
+    docker:
+    - image: circleci/golang:1.11
+  gcloud:
+    docker:
+    - image: google/cloud-sdk:latest
+
+jobs:
+  test:
+    executor: golang
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+          - go-mod-v1-{{ checksum "go.sum" }}
+      - run:
+          name: build
+          command: go build
+      - run:
+          name: test
+          command: go test
+
+  deploy:
+    executor: gcloud
+    steps:
+      - checkout
+      - gcp-cli/initialize
+      - run: gcloud app deploy --no-promote --version $CIRCLE_SHA1 --quiet
+
+  set-traffic:
+    parameters:
+      before-traffic:
+        type: string
+        default: "0.99"
+      after-traffic:
+        type: string
+        default: "0.01"
+    executor: gcloud
+    steps:
+    - checkout
+    - gcp-cli/initialize
+    - run: |
+        BEFORE_VERSION="$(gcloud app versions list --service=${GAE_SERVICE} --filter='traffic_split>0.5' --format='value(id)')"
+        gcloud app services set-traffic --splits ${BEFORE_VERSION}=<< parameters.before-traffic >>,${CIRCLE_SHA1}=<< parameters.after-traffic >> --split-by=random --quiet
+
+  promote:
+    executor: gcloud
+    steps:
+    - checkout
+    - gcp-cli/initialize
+    - run: gcloud app services set-traffic --splits ${CIRCLE_SHA1}=1 --split-by=random --quiet --migrate
+
+workflows:
+  version: 2
+  test_and_deploy:
+    jobs:
+      - test
+      - deploy:
+          requires:
+          - test
+          filters:
+            branches:
+              only:
+                - master
+      - hold-canary:
+          type: approval
+          requires:
+          - deploy
+      - set-traffic:
+          name: canary
+          requires:
+          - hold-canary
+          before-traffic: "0.99"
+          after-traffic: "0.01"
+      - hold-promote:
+          type: approval
+          requires:
+          - canary
+      - promote:
+          requires:
+          - hold-promote
+
